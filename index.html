@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mapa Interactivo Pro | Gaming</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --accent: #3b82f6;
+            --bg-body: #020617;
+            --panel-bg: rgba(15, 23, 42, 0.85);
+        }
+
+        body {
+            background-color: var(--bg-body);
+            color: #f8fafc;
+            margin: 0;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        #viewport {
+            width: 100vw;
+            height: 100vh;
+            cursor: grab;
+            overflow: hidden;
+            position: relative;
+            touch-action: none;
+        }
+
+        /* Estructura de 4x4 piezas */
+        #map-grid {
+            position: absolute;
+            display: grid;
+            /* Cambia 512px si tus imágenes tienen otro tamaño */
+            grid-template-columns: repeat(4, 512px); 
+            gap: 0;
+            transform-origin: 0 0;
+            background: #000;
+        }
+
+        .map-tile {
+            width: 512px;
+            height: 512px;
+            display: block;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        /* Marcadores Estilo Pin */
+        .marker {
+            position: absolute;
+            width: 44px;
+            height: 44px;
+            cursor: pointer;
+            z-index: 100;
+            filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5));
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .marker:hover { transform: scale(1.2) translateY(-5px); }
+
+        /* Interfaz de Usuario */
+        .ui-element {
+            position: fixed;
+            z-index: 1000;
+            pointer-events: auto;
+            backdrop-filter: blur(12px);
+        }
+
+        .info-panel {
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 420px;
+            background: var(--panel-bg);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 24px;
+            display: none;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translate(-50%, 20px); }
+            to { opacity: 1; transform: translate(-50%, 0); }
+        }
+
+        .btn-control {
+            background: var(--panel-bg);
+            color: white;
+            width: 52px;
+            height: 52px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            border: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 8px;
+        }
+
+        .btn-control:active { background: var(--accent); }
+
+    </style>
+</head>
+<body>
+
+    <div id="viewport">
+        <div id="map-grid">
+            </div>
+    </div>
+
+    <div class="ui-element top-6 left-6 flex items-center gap-3 bg-slate-900/60 p-2 pr-6 rounded-full border border-white/10">
+        <div class="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center shadow-lg shadow-blue-500/20">
+            📡
+        </div>
+        <div>
+            <h1 class="text-xs font-bold uppercase tracking-widest text-blue-400">Sistema de Mapeo</h1>
+            <p id="coord-display" class="text-[10px] font-mono text-slate-400 text-slate-400">X: 0 | Y: 0</p>
+        </div>
+    </div>
+
+    <div class="ui-element right-6 bottom-6 flex flex-col">
+        <button class="btn-control" onclick="adjustZoom(0.15)">+</button>
+        <button class="btn-control" onclick="adjustZoom(-0.15)">-</button>
+        <button class="btn-control" onclick="centerMap()">🎯</button>
+    </div>
+
+    <div id="info-card" class="ui-element info-panel">
+        <div class="flex justify-between items-start mb-4">
+            <h2 id="p-title" class="text-2xl font-black text-white italic tracking-tight leading-none uppercase">Nombre Lugar</h2>
+            <button onclick="hideInfo()" class="text-slate-500 hover:text-white transition-colors">✕</button>
+        </div>
+        <p id="p-desc" class="text-slate-300 text-sm leading-relaxed mb-4">Descripción del punto de interés...</p>
+        <div class="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
+            <div id="p-bar" class="h-full bg-blue-500 w-1/3"></div>
+        </div>
+    </div>
+
+    <script>
+        /** * CONFIGURACIÓN DE RUTAS
+         * Si tus imágenes están en una subcarpeta, cambia esto a "nombre_carpeta/L1C1.webp"
+         */
+        const tileFiles = [
+            "L1C1.webp", "L1C2.webp", "L1C3.webp", "L1C4.webp",
+            "L2C1.webp", "L2C2.webp", "L2C3.webp", "L2C4.webp",
+            "L3C1.webp", "L3C2.webp", "L3C3.webp", "L3C4.webp",
+            "L4C1.webp", "L4C2.webp", "L4C3.webp", "L4C4.webp"
+        ];
+
+        // Agrega aquí tus puntos de interés (X y Y son píxeles reales sobre el mapa de 2048x2048)
+        const points = [
+            { x: 520, y: 380, title: "Zona de Salto", desc: "Punto estratégico para iniciar la partida con loot de nivel 2." },
+            { x: 1450, y: 920, title: "Base de Operaciones", desc: "Área de alta peligrosidad. Contiene munición pesada y vehículos." },
+            { x: 890, y: 1600, title: "Refugio Oculto", desc: "Lugar secreto para curarse sin ser detectado." }
+        ];
+
+        let scale = 0.45;
+        let posX = 0;
+        let posY = 0;
+        const grid = document.getElementById('map-grid');
+        const viewport = document.getElementById('viewport');
+
+        function init() {
+            // Generar piezas
+            tileFiles.forEach(name => {
+                const img = document.createElement('img');
+                img.src = name; 
+                img.className = 'map-tile';
+                img.onerror = () => { img.style.background = '#111'; };
+                grid.appendChild(img);
+            });
+
+            // Generar Marcadores
+            points.forEach(p => {
+                const marker = document.createElement('div');
+                marker.className = 'marker';
+                marker.style.left = `${p.x}px`;
+                marker.style.top = `${p.y}px`;
+                marker.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 21C16 17.5 19 14.4087 19 10.3125C19 6.2721 15.866 3 12 3C8.13401 3 5 6.2721 5 10.3125C5 14.4087 8 17.5 12 21Z" fill="#3b82f6" stroke="white" stroke-width="2"/>
+                        <circle cx="12" cy="10" r="3" fill="white"/>
+                    </svg>
+                `;
+                marker.onclick = (e) => { e.stopPropagation(); showInfo(p); };
+                grid.appendChild(marker);
+            });
+
+            centerMap();
+            update();
+        }
+
+        // LÓGICA DE MOVIMIENTO
+        let isDragging = false;
+        let startX, startY;
+
+        const moveStart = (ex, ey) => {
+            isDragging = true;
+            startX = ex - posX;
+            startY = ey - posY;
+            viewport.style.cursor = 'grabbing';
+        };
+
+        const moveUpdate = (ex, ey) => {
+            if (!isDragging) return;
+            posX = ex - startX;
+            posY = ey - startY;
+            
+            // Actualizar display de coordenadas para feedback visual
+            document.getElementById('coord-display').innerText = `X: ${Math.round(-posX)} | Y: ${Math.round(-posY)}`;
+            update();
+        };
+
+        viewport.onmousedown = (e) => moveStart(e.clientX, e.clientY);
+        window.onmousemove = (e) => moveUpdate(e.clientX, e.clientY);
+        window.onmouseup = () => { isDragging = false; viewport.style.cursor = 'grab'; };
+
+        viewport.ontouchstart = (e) => moveStart(e.touches[0].clientX, e.touches[0].clientY);
+        viewport.ontouchmove = (e) => moveUpdate(e.touches[0].clientX, e.touches[0].clientY);
+        viewport.ontouchend = () => isDragging = false;
+
+        function adjustZoom(delta) {
+            scale = Math.min(Math.max(0.15, scale + delta), 2.0);
+            update();
+        }
+
+        function centerMap() {
+            // Centrado basado en el tamaño total (4x512 = 2048)
+            const mapSize = 2048 * scale;
+            posX = (window.innerWidth - mapSize) / 2;
+            posY = (window.innerHeight - mapSize) / 2;
+            update();
+        }
+
+        function update() {
+            grid.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
+        }
+
+        function showInfo(p) {
+            document.getElementById('p-title').innerText = p.title;
+            document.getElementById('p-desc').innerText = p.desc;
+            document.getElementById('info-card').style.display = 'block';
+            // Animación aleatoria de la barrita para efecto visual
+            document.getElementById('p-bar').style.width = Math.floor(Math.random() * 80 + 20) + '%';
+        }
+
+        function hideInfo() {
+            document.getElementById('info-card').style.display = 'none';
+        }
+
+        init();
+    </script>
+</body>
+</html>
